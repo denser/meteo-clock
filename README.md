@@ -1,4 +1,4 @@
-# 🌦️ ESP32-C6 MeteoStation
+# 🌦️ ESP32-C6 MeteoClock
 
 [![ESPHome](https://img.shields.io/badge/ESPHome-2026.2.1-blue.svg)](https://esphome.io)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Integration-orange.svg)](https://www.home-assistant.io)
