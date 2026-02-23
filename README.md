@@ -4,7 +4,7 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Integration-orange.svg)](https://www.home-assistant.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Полноценная метеостанция на базе **ESP32-C6** с дисплеем, русскими буквами и полной интеграцией в **Home Assistant**. Проект является развитием идей [AlexGyver MeteoClock](https://alexgyver.ru/meteoclock/) и [Norovl]https://github.com/Norovl/meteoClock, адаптированных под современное железо и экосистему умного дома.
+Полноценная метеостанция на базе **ESP32-C6** с дисплеем, русскими буквами и полной интеграцией в **Home Assistant**. Проект является развитием идей [AlexGyver MeteoClock](https://alexgyver.ru/meteoclock/) и [Norovl](https://github.com/Norovl/meteoClock), адаптированных под современное железо и экосистему умного дома.
 
 ---
 
