@@ -1,0 +1,483 @@
+substitutions:
+  name: meteo-clock
+  friendly_name: Метео-часы
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  project:
+    name: esphome.${name}
+    version: "1.2"  # Обновили версию
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESPTOOLPY_FLASHSIZE_8MB: y
+
+# WiFi подключение
+wifi:
+  id: wifi_sta
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    id: wifi_ap
+    ssid: ${name}
+    password: !secret ap_password  # Исправлено!
+
+captive_portal:
+
+web_server:
+  port: 80
+  version: 3
+  auth:
+    username: admin
+    password: !secret web_server_password
+  include_internal: true
+
+# API для Home Assistant
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+logger:
+  level: INFO
+
+# Время из Home Assistant
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: Asia/Krasnoyarsk
+    on_time_sync:
+      then:
+        - logger.log: "✅ Время синхронизировано с Home Assistant"
+
+# I2C для датчиков и дисплея
+i2c:
+  - id: bus_a
+    sda: GPIO6
+    scl: GPIO7
+    scan: true
+    frequency: 100kHz
+
+# UART для MH-Z19
+uart:
+  - id: uart_1
+    tx_pin: GPIO4
+    rx_pin: GPIO3
+    baud_rate: 9600
+
+# ========== ДАТЧИКИ ==========
+sensor:
+  # BME280
+  - platform: bme280_i2c
+    i2c_id: bus_a
+    address: 0x76
+    temperature:
+      id: bme_temperature
+      name: "Температура"
+      unit_of_measurement: "°C"
+      accuracy_decimals: 1
+      state_class: measurement
+      device_class: temperature
+    pressure:
+      id: bme_pressure
+      name: "Давление"
+      unit_of_measurement: "mmHg"
+      accuracy_decimals: 1
+      state_class: measurement
+      device_class: pressure
+      filters:
+        - lambda: return x * 0.75006168278;
+    humidity:
+      id: bme_humidity
+      name: "Влажность"
+      unit_of_measurement: "%"
+      accuracy_decimals: 0
+      state_class: measurement
+      device_class: humidity
+    update_interval: 10s
+
+  # MH-Z19 CO2
+  - platform: mhz19
+    uart_id: uart_1
+    co2:
+      id: mhz19_co2
+      name: "CO2"
+      unit_of_measurement: "ppm"
+      accuracy_decimals: 0
+      state_class: measurement
+      device_class: carbon_dioxide
+    update_interval: 30s
+    automatic_baseline_calibration: false
+
+  # Фоторезистор
+  - platform: adc
+    id: photo_sensor
+    name: "Освещенность"
+    pin: GPIO1
+    attenuation: 12db
+    update_interval: 5s
+    filters:
+      - lambda: return x * 1000;
+    unit_of_measurement: "lx"
+    accuracy_decimals: 0
+    state_class: measurement
+    device_class: illuminance
+
+# ========== КНОПКА ==========
+binary_sensor:
+  - platform: gpio
+    id: button_pin
+    name: "Кнопка"
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on_off: 10ms
+    on_press:
+      then:
+        - lambda: |-
+            std::string current = id(display_mode).current_option();
+            std::string next;
+            if (current == "Все показания") next = "Крупно время";
+            else if (current == "Крупно время") next = "Крупно CO2";
+            else next = "Все показания";
+            id(display_mode).make_call().set_option(next).perform();
+            id(update_display).execute();
+
+# ========== НАСТРОЙКИ (УПРАВЛЕНИЕ ИЗ HA) ==========
+select:
+  # Режим экрана
+  - platform: template
+    id: display_mode
+    name: "Режим экрана"
+    entity_category: config
+    icon: "mdi:monitor-dashboard"
+    optimistic: true
+    restore_value: true
+    options:
+      - "Все показания"
+      - "Крупно время"
+      - "Крупно CO2"
+    initial_option: "Все показания"
+    set_action:
+      then:
+        - lambda: |-
+            id(update_display).execute();
+
+  # Режим индикатора
+  - platform: template
+    id: led_mode_select
+    name: "Режим индикатора"
+    entity_category: config
+    icon: "mdi:palette"
+    optimistic: true
+    options:
+      - "CO2"
+      - "Влажность"
+      - "Температура"
+    initial_option: "CO2"
+    set_action:
+      then:
+        - lambda: |-
+            id(update_led).execute();
+
+  # Источник индикатора
+  - platform: template
+    id: led_source
+    name: "Источник индикатора"
+    entity_category: config
+    icon: "mdi:led-outline"
+    optimistic: true
+    restore_value: true
+    options:
+      - "Внешний RGB"
+      - "Встроенный"
+    initial_option: "Встроенный"
+    set_action:
+      then:
+        - lambda: id(update_led).execute();
+
+number:
+  - platform: template
+    id: lcd_brightness
+    name: "Яркость экрана"
+    entity_category: config
+    icon: "mdi:brightness-6"
+    unit_of_measurement: "%"
+    min_value: 10
+    max_value: 100
+    step: 5
+    optimistic: true
+    initial_value: 80
+    set_action:
+      then:
+        - lambda: |-
+            auto call = id(lcd_backlight).turn_on();
+            call.set_brightness(x / 100.0);
+            call.perform();
+
+  - platform: template
+    id: led_brightness
+    name: "Яркость индикатора"
+    entity_category: config
+    icon: "mdi:led-variant"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    optimistic: true
+    initial_value: 50
+    set_action:
+      then:
+        - lambda: id(update_led).execute();
+
+switch:
+  - platform: template
+    id: auto_brightness
+    name: "Автояркость экрана"
+    entity_category: config
+    icon: "mdi:brightness-auto"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: |-
+      return id(auto_brightness).state;
+    turn_on_action:
+      then:
+        - lambda: |-
+            auto call = id(lcd_backlight).turn_on();
+            call.set_brightness(1.0);
+            call.perform();
+    turn_off_action:
+      then:
+        - lambda: |-
+            auto call = id(lcd_backlight).turn_on();
+            call.set_brightness(0.5);
+            call.perform();
+
+# ========== ВЫХОДЫ И СВЕТОДИОДЫ ==========
+output:
+  - platform: ledc
+    id: pwm_red
+    pin: GPIO5
+    frequency: 1000 Hz
+  - platform: ledc
+    id: pwm_green
+    pin: GPIO18
+    frequency: 1000 Hz
+  - platform: ledc
+    id: pwm_blue
+    pin: GPIO19
+    frequency: 1000 Hz
+  - platform: ledc
+    id: pwm_backlight
+    pin: GPIO20
+    frequency: 5000 Hz
+
+light:
+  # Внешний RGB светодиод (GPIO5,18,19)
+  - platform: rgb
+    id: rgb_led
+    name: "Внешний RGB индикатор"
+    red: pwm_red
+    green: pwm_green
+    blue: pwm_blue
+    restore_mode: ALWAYS_OFF
+
+  # Встроенный RGB светодиод (GPIO8)
+  - platform: esp32_rmt_led_strip
+    id: builtin_rgb
+    name: "Встроенный индикатор"
+    pin: GPIO8
+    num_leds: 1
+    rgb_order: GRB
+    chipset: ws2812
+    restore_mode: ALWAYS_OFF
+    effects:
+      - pulse:
+          name: "Пульс"
+      - strobe:
+          name: "Стробоскоп"
+
+  # Подсветка экрана
+  - platform: monochromatic
+    id: lcd_backlight
+    name: "Подсветка экрана"
+    output: pwm_backlight
+    restore_mode: RESTORE_DEFAULT_ON
+
+# ========== СКРИПТЫ ==========
+script:
+  - id: update_display
+    then:
+     - lambda: |-
+          if (id(my_lcd).is_ready()) {
+            id(my_lcd).update();
+            ESP_LOGD("display", "Дисплей обновлен");
+          } else {
+            static unsigned long last_log = 0;
+            if (millis() - last_log > 60000) {
+              ESP_LOGD("display", "Дисплей не готов, ожидание...");
+              last_log = millis();
+            }
+          }
+
+  - id: update_led
+    then:
+      - lambda: |-
+          float brightness = id(led_brightness).state / 100.0;
+          std::string mode_str = id(led_mode_select).current_option();
+          std::string source = id(led_source).current_option();
+          
+          light::LightState *target_led;
+          if (source == "Внешний RGB") {
+            target_led = id(rgb_led);
+          } else {
+            target_led = id(builtin_rgb);
+          }
+          
+          if (mode_str == "CO2") {
+            if (id(mhz19_co2).state >= 1500) {
+              target_led->turn_on().set_rgb(1.0, 0.0, 0.0).set_brightness(brightness).perform();
+            } else if (id(mhz19_co2).state >= 1000) {
+              target_led->turn_on().set_rgb(1.0, 0.5, 0.0).set_brightness(brightness).perform();
+            } else {
+              target_led->turn_on().set_rgb(0.0, 1.0, 0.0).set_brightness(brightness).perform();
+            }
+          } else if (mode_str == "Влажность") {
+            if (id(bme_humidity).state <= 20) {
+              target_led->turn_on().set_rgb(1.0, 0.0, 0.0).set_brightness(brightness).perform();
+            } else if (id(bme_humidity).state <= 30) {
+              target_led->turn_on().set_rgb(1.0, 1.0, 0.0).set_brightness(brightness).perform();
+            } else if (id(bme_humidity).state >= 80) {
+              target_led->turn_on().set_rgb(0.0, 0.0, 1.0).set_brightness(brightness).perform();
+            } else {
+              target_led->turn_on().set_rgb(0.0, 1.0, 0.0).set_brightness(brightness).perform();
+            }
+          } else {
+            if (id(bme_temperature).state >= 30) {
+              target_led->turn_on().set_rgb(1.0, 0.0, 0.0).set_brightness(brightness).perform();
+            } else if (id(bme_temperature).state >= 25) {
+              target_led->turn_on().set_rgb(1.0, 0.5, 0.0).set_brightness(brightness).perform();
+            } else if (id(bme_temperature).state <= 15) {
+              target_led->turn_on().set_rgb(0.0, 0.0, 1.0).set_brightness(brightness).perform();
+            } else {
+              target_led->turn_on().set_rgb(0.0, 1.0, 0.0).set_brightness(brightness).perform();
+            }
+          }
+
+# ========== ИНТЕРВАЛЫ ==========
+interval:
+  - interval: 1s
+    then:
+      - script.execute: update_display
+
+  - interval: 5s
+    then:
+      - script.execute: update_led
+      - lambda: |-
+          if (id(auto_brightness).state) {
+            float light = id(photo_sensor).state;
+            float brightness = light > 500 ? 1.0 : (light > 100 ? 0.6 : 0.3);
+            auto call = id(lcd_backlight).turn_on();
+            call.set_brightness(brightness);
+            call.perform();
+          }
+
+# ========== ДИСПЛЕЙ С РУССКИМИ БУКВАМИ ==========
+display:
+  - platform: lcd_pcf8574
+    id: my_lcd
+    address: 0x27
+    dimensions: 20x4
+    user_characters:
+      - position: 0
+        data: [0b11111, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b00000]  # П
+      - position: 1
+        data: [0b11111, 0b10000, 0b10000, 0b11111, 0b10001, 0b10001, 0b11111, 0b00000]  # Б
+      - position: 2
+        data: [0b10001, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b00001, 0b00000]  # Ч
+      - position: 3
+        data: [0b10001, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b10001, 0b00000]  # И
+      - position: 4
+        data: [0b01110, 0b01010, 0b01010, 0b01010, 0b01010, 0b01010, 0b11111, 0b10001]  # Д
+      - position: 5
+        data: [0b01111, 0b01001, 0b01001, 0b01001, 0b01001, 0b01001, 0b10001, 0b00000]  # Л
+      - position: 6
+        data: [0b10101, 0b10101, 0b10101, 0b01110, 0b10101, 0b10101, 0b10101, 0b00000]  # Ж
+      - position: 7
+        data: [0b00110, 0b01001, 0b01001, 0b00110, 0b00000, 0b00000, 0b00000, 0b00000]  # Градус
+    lambda: |-
+      it.clear();
+      auto time = id(ha_time).now();
+      bool time_valid = time.is_valid();
+      std::string mode = id(display_mode).current_option();
+
+      if (mode == "Все показания") {
+        it.print(0, 0, "TEM" "\x00" ":");
+        it.printf(6, 0, "%2.1f", id(bme_temperature).state);
+        it.print(10, 0, "\x07" "C");
+        it.print(12, 0, "B" "\x05" "A" "\x06" ":");
+        it.printf(17, 0, "%3.0f%%", id(bme_humidity).state);
+        it.print(0, 1, "\x04" "AB" "\x05" ":");
+        it.printf(6, 1, "%3.0f", id(bme_pressure).state);
+        it.print(9, 1, "mm");
+        it.print(11, 1, "CO2:");
+        it.printf(15, 1, "%4.0f", id(mhz19_co2).state);
+        it.print(19, 1, "ppm");
+        if (time_valid) {
+            int wday = time.day_of_week;
+            switch(wday) {
+              case 1: it.print(0, 2, "BC"); break;
+              case 2: it.print(0, 2, "\x00" "H"); break;
+              case 3: it.print(0, 2, "BT"); break;
+              case 4: it.print(0, 2, "CP"); break;
+              case 5: it.print(0, 2, "\x02" "T"); break;
+              case 6: it.print(0, 2, "\x00" "T"); break;
+              case 7: it.print(0, 2, "C" "\x01"); break;
+            }
+            it.strftime(3, 2, "%d.%m.%Y", time);
+        } else {
+            it.print(0, 2, "C" "\x03" "HXP...");
+        }
+        if (time_valid) {
+            char time_str[9];
+            sprintf(time_str, "%02d:%02d:%02d", time.hour, time.minute, time.second);
+            it.print(6, 3, time_str);
+        } else {
+            it.print(6, 3, "--:--:--");
+        }
+        if (id(wifi_sta).is_connected()) {
+            it.print(18, 3, "HA");
+        }
+      } else if (mode == "Крупно время") {
+        if (time_valid) {
+            it.printf(5, 0, "%02d", time.hour);
+            it.printf(5, 1, "%02d", time.minute);
+            it.printf(5, 2, "%02d", time.second);
+            it.print(9, 0, ":");
+            it.print(9, 1, ":");
+            it.strftime(0, 3, "%d.%m.%Y", time);
+        } else {
+            it.print(0, 1, "C" "\x03" "HXP...");
+        }
+      } else if (mode == "Крупно CO2") {
+        it.print(5, 0, "CO2");
+        it.printf(5, 1, "%d", (int)id(mhz19_co2).state);
+        it.print(5, 2, "ppm");
+        if (time_valid) {
+            it.strftime(0, 3, "%H:%M:%S", time);
+        }
+      }
