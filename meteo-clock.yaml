@@ -4,7 +4,7 @@ esphome:
   name_add_mac_suffix: false
   project:
     name: esphome.meteo-clock
-    version: "1.2"
+    version: "1.3"  # Обновил версию
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -87,11 +87,12 @@ sensor:
     address: 0x76
     temperature:
       id: bme_temperature
-      name: "Температура"
+      name: "Температура (сырая)"
       unit_of_measurement: "°C"
       accuracy_decimals: 1
       state_class: measurement
       device_class: temperature
+      internal: true  # Скрываем сырую температуру из HA
     pressure:
       id: bme_pressure
       name: "Давление"
@@ -109,6 +110,17 @@ sensor:
       state_class: measurement
       device_class: humidity
     update_interval: 10s
+
+  # Откалиброванная температура
+  - platform: template
+    id: calibrated_temperature
+    name: "Температура"
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    state_class: measurement
+    device_class: temperature
+    lambda: |-
+      return id(bme_temperature).state + id(temp_offset);
 
   # MH-Z19 CO2
   - platform: mhz19
@@ -164,7 +176,7 @@ binary_sensor:
             id(display_mode).make_call().set_option(next).perform();
             id(update_display_if_needed).execute();
 
-# ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОПТИМИЗАЦИИ ==========
+# ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 globals:
   - id: last_hour
     type: int
@@ -194,6 +206,10 @@ globals:
     type: int
     restore_value: false
     initial_value: '-1'
+  - id: temp_offset
+    type: float
+    restore_value: true
+    initial_value: '0.0'
 
 # ========== СКРИПТЫ ==========
 script:
@@ -252,12 +268,14 @@ script:
           
           // Проверка датчиков (только для режимов с датчиками)
           if (current_mode <= 2) {
-            float temp = id(bme_temperature).state;
+            // Температура с коррекцией
+            float raw_temp = id(bme_temperature).state;
+            float temp = raw_temp + id(temp_offset);
             if (abs(temp - id(last_temp)) > 0.1) {
               id(last_temp) = temp;
               need_update = true;
               reason += "температура ";
-              ESP_LOGD("display", "Изменилась температура");
+              ESP_LOGD("display", "Изменилась температура (корр: %.1f, сырая: %.1f)", temp, raw_temp);
             }
             
             int hum = (int)id(bme_humidity).state;
@@ -370,7 +388,9 @@ script:
             }
             
           } else {
-            float temp = id(bme_temperature).state;
+            // Температура с коррекцией для LED
+            float raw_temp = id(bme_temperature).state;
+            float temp = raw_temp + id(temp_offset);
             
             if (temp >= 30) {
               current_color = 0;
@@ -388,11 +408,11 @@ script:
             
             if (mode_str != last_mode || abs(temp - last_temp) > 1.0 || current_color != last_color) {
               changed = true;
-              ESP_LOGD("led", "Температура: %s (%.1f°C)", 
+              ESP_LOGD("led", "Температура: %s (%.1f°C, корр: %.1f)", 
                        current_color == 0 ? "красный" : 
                        (current_color == 1 ? "оранжевый" : 
                        (current_color == 2 ? "синий" : "зеленый")), 
-                       temp);
+                       temp, id(temp_offset));
               last_temp = temp;
             }
           }
@@ -527,6 +547,26 @@ number:
             id(update_led).execute();
             ESP_LOGD("number", "Яркость индикатора сохранена: %.0f", x);
 
+  # Калибровка температуры
+  - platform: template
+    id: temp_offset_setting
+    name: "Коррекция температуры"
+    entity_category: config
+    icon: "mdi:thermometer-plus"
+    unit_of_measurement: "°C"
+    min_value: -5.0
+    max_value: 5.0
+    step: 0.1
+    optimistic: false
+    restore_value: true
+    initial_value: 0.0
+    set_action:
+      then:
+        - lambda: |-
+            id(temp_offset) = x;
+            ESP_LOGD("calibration", "Коррекция температуры установлена: %.1f°C", x);
+            id(update_display_if_needed).execute();
+
 switch:
   - platform: template
     id: auto_brightness
@@ -646,8 +686,10 @@ display:
       std::string mode = id(display_mode).current_option();
 
       if (mode == "Все показания") {
-        // Температура
-        it.printf(15, 1, "%3.1f\x07", id(bme_temperature).state); // \x07 = градус
+        // Температура с коррекцией
+        float raw_temp = id(bme_temperature).state;
+        float display_temp = raw_temp + id(temp_offset);
+        it.printf(15, 1, "%3.1f\x07", display_temp); // \x07 = градус
         
         // Влажность
         it.printf(16, 0, "%3.0f%%", id(bme_humidity).state);
@@ -694,7 +736,7 @@ display:
         
         // WiFi
         if (id(wifi_sta).is_connected()) {
-          it.print(0, 0, "\\");
+          it.print(15, 0, "\\");
         }
         
       } else if (mode == "Крупно время") {
