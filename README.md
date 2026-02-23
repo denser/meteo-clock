@@ -205,6 +205,8 @@ entities:
 
 Home Assistant
 Все настройки доступны через интерфейс HA и могут быть использованы в автоматизациях.
+<img width="1129" height="1256" alt="image" src="https://github.com/user-attachments/assets/1359e5b5-d523-4f16-a4b7-7b2394ba7f2f" />
+
 
 Также доступны через вэб-интерфейс:
 <img width="1656" height="1058" alt="image" src="https://github.com/user-attachments/assets/504addd3-05b2-4225-9e28-eaf6061854e1" />
