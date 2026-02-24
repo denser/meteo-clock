@@ -24,6 +24,11 @@ wifi:
     id: wifi_ap
     ssid: "Meteo-Clock"
     password: !secret ap_password
+  on_connect:
+    then:
+      - logger.log: "✅ WiFi подключен"
+      - lambda: |-
+          id(ha_time).update();  // принудительная синхронизация
 
 captive_portal:
 
@@ -46,14 +51,9 @@ ota:
 
 logger:
   level: DEBUG
+  initial_level: INFO  # начальный уровень при загрузке (можно менять через HA)
   logs:
     logger: INFO
-    display: DEBUG
-    number: DEBUG
-    led: DEBUG
-    sensor: INFO
-    binary_sensor: INFO
-    light: INFO
 
 # Время из Home Assistant
 time:
@@ -480,33 +480,10 @@ select:
       then:
         - lambda: id(update_led).execute();
 
-  # Уровень логирования
-  - platform: template
-    id: log_level_select
+  # Встроенный селектор для уровня логирования
+  - platform: logger
     name: "Уровень журнала"
-    entity_category: config
-    icon: "mdi:format-list-bulleted"
-    optimistic: true
-    restore_value: true
-    options:
-      - "NONE"
-      - "ERROR"
-      - "WARN"
-      - "INFO"
-      - "DEBUG"
-      - "VERBOSE"
-    initial_option: "INFO"
-    set_action:
-      then:
-        - lambda: |-
-            std::string level = x;
-            if (level == "NONE") esp_log_level_set("*", ESP_LOG_NONE);
-            else if (level == "ERROR") esp_log_level_set("*", ESP_LOG_ERROR);
-            else if (level == "WARN") esp_log_level_set("*", ESP_LOG_WARN);
-            else if (level == "INFO") esp_log_level_set("*", ESP_LOG_INFO);
-            else if (level == "DEBUG") esp_log_level_set("*", ESP_LOG_DEBUG);
-            else if (level == "VERBOSE") esp_log_level_set("*", ESP_LOG_VERBOSE);
-            ESP_LOGI("logger", "Уровень логирования изменен на %s", level.c_str());
+    id: logger_level_select
 
 number:
   - platform: template
@@ -558,14 +535,18 @@ number:
     max_value: 5.0
     step: 0.1
     optimistic: false
-    restore_value: true
-    initial_value: 0.0
     set_action:
       then:
         - lambda: |-
+            // Обновляем глобальную переменную
             id(temp_offset) = x;
+            // Отправляем в HA
+            id(temp_offset_setting).publish_state(x);
             ESP_LOGD("calibration", "Коррекция температуры установлена: %.1f°C", x);
             id(update_display_if_needed).execute();
+    lambda: |-
+      // При загрузке или запросе от HA возвращаем текущее значение
+      return id(temp_offset);
 
 switch:
   - platform: template
