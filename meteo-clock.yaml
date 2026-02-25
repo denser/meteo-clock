@@ -15,6 +15,11 @@ esp32:
     sdkconfig_options:
       CONFIG_ESPTOOLPY_FLASHSIZE_8MB: y
 
+esp32_ble_tracker:
+
+bluetooth_proxy:
+  active: true
+
 # WiFi подключение
 wifi:
   id: wifi_sta
@@ -51,7 +56,7 @@ ota:
 
 logger:
   level: DEBUG
-  initial_level: INFO  # начальный уровень при загрузке (можно менять через HA)
+  initial_level: WARN  # начальный уровень при загрузке (можно менять через HA)
   logs:
     logger: INFO
 
@@ -772,7 +777,7 @@ display:
           // Дата в правом нижнем углу
           it.strftime(12, 3, "%d.%m.%Y", time);  // строка 3, колонка 12
         } else {
-          it.print(0, 1, "C" "\x03" "HXP...");
+          it.print(0, 1, "CHXP...");
         }
         
       } else if (mode == "Крупно CO2") {
