@@ -44,6 +44,8 @@ web_server:
     username: admin
     password: !secret web_server_password
   include_internal: true
+  local: true
+  ota: false
 
 # API для Home Assistant
 api:
@@ -59,6 +61,7 @@ logger:
   initial_level: WARN  # начальный уровень при загрузке (можно менять через HA)
   logs:
     logger: INFO
+    web_server: DEBUG
 
 # Время из Home Assistant
 time:
