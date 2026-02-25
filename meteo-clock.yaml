@@ -79,6 +79,18 @@ uart:
     rx_pin: GPIO3
     baud_rate: 9600
 
+# ========== КНОПКИ УПРАВЛЕНИЯ ==========
+button:
+  - platform: template
+    name: "Калибровка CO₂ (20 мин на воздухе)"
+    id: calibrate_co2_button
+    entity_category: diagnostic
+    icon: "mdi:chemical-weapon"
+    on_press:
+      then:
+        - logger.log: "▶️ Запуск калибровки нуля MH-Z19"
+        - mhz19.calibrate_zero: mhz19_sensor
+
 # ========== ДАТЧИКИ ==========
 sensor:
   # BME280
@@ -124,6 +136,7 @@ sensor:
 
   # MH-Z19 CO2
   - platform: mhz19
+    id: mhz19_sensor
     uart_id: uart_1
     co2:
       id: mhz19_co2
@@ -210,6 +223,10 @@ globals:
     type: float
     restore_value: true
     initial_value: '0.0'
+  - id: abc_enabled
+    type: bool
+    restore_value: true
+    initial_value: 'true'  # По умолчанию ABC включена
 
 # ========== СКРИПТЫ ==========
 script:
@@ -570,6 +587,33 @@ switch:
             auto call = id(lcd_backlight).turn_on();
             call.set_brightness(0.5);
             call.perform();
+  
+  - platform: template
+    name: "Автокалибровка CO₂ (ABC)"
+    id: abc_co2_switch
+    entity_category: diagnostic
+    icon: "mdi:calendar-sync"
+    optimistic: false
+    restore_mode: RESTORE_DEFAULT_OFF  # по умолчанию выключено
+    lambda: |-
+      // При запуске читаем текущее состояние ABC из датчика
+      // Но ESPHome не даёт прямого доступа к этому значению через API
+      // Поэтому используем сохранённое значение из глобальной переменной
+      return id(abc_enabled);
+    turn_on_action:
+      then:
+        - logger.log: "✅ Автокалибровка CO₂ включена"
+        - mhz19.abc_enable: mhz19_sensor
+        - lambda: |-
+            id(abc_enabled) = true;
+            id(abc_co2_switch).publish_state(true);
+    turn_off_action:
+      then:
+        - logger.log: "❌ Автокалибровка CO₂ отключена"
+        - mhz19.abc_disable: mhz19_sensor
+        - lambda: |-
+            id(abc_enabled) = false;
+            id(abc_co2_switch).publish_state(false);
 
 # ========== ВЫХОДЫ И СВЕТОДИОДЫ ==========
 output:
