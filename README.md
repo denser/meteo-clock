@@ -7,8 +7,7 @@
 Полноценная метеостанция на базе **ESP32-C6** с дисплеем, русскими буквами и полной интеграцией в **Home Assistant**. Проект является развитием идей [AlexGyver MeteoClock](https://alexgyver.ru/meteoclock/) и [Norovl](https://github.com/Norovl/meteoClock), адаптированных под современное железо и экосистему умного дома.
 
 ---
-<img width="1368" height="554" alt="image" src="https://github.com/user-attachments/assets/a26b5dc9-8b42-415c-8c8b-f58532192a28" />
-
+<img width="1468" height="996" alt="image" src="https://github.com/user-attachments/assets/a29fa30a-7afd-4fc3-8ccf-332e858443c9" />
 
 ## ✨ Возможности
 
