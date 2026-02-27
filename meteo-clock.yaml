@@ -4,7 +4,7 @@ esphome:
   name_add_mac_suffix: false
   project:
     name: esphome.meteo-clock
-    version: "1.3"  # Обновил версию
+    version: "1.4"
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -61,7 +61,6 @@ logger:
   initial_level: WARN  # начальный уровень при загрузке (можно менять через HA)
   logs:
     logger: INFO
-    web_server: DEBUG
 
 # Время из Home Assistant
 time:
@@ -188,12 +187,11 @@ binary_sensor:
         - lambda: |-
             std::string current = id(display_mode).current_option();
             std::string next;
-            if (current == "Все показания") next = "Крупно время";
-            else if (current == "Крупно время") next = "Крупно CO2";
+            if (current == "Крупно время") next = "Крупно CO2";
             else if (current == "Крупно CO2") next = "Таблица символов 1";
             else if (current == "Таблица символов 1") next = "Таблица символов 2";
             else if (current == "Таблица символов 2") next = "Таблица символов 3";
-            else next = "Все показания";
+            else next = "Крупно время";
             id(display_mode).make_call().set_option(next).perform();
             id(update_display_if_needed).execute();
 
@@ -460,13 +458,12 @@ select:
     optimistic: true
     restore_value: true
     options:
-      - "Все показания"
       - "Крупно время"
       - "Крупно CO2"
       - "Таблица символов 1"
       - "Таблица символов 2"
       - "Таблица символов 3"
-    initial_option: "Все показания"
+    initial_option: "Крупно время"
     set_action:
       then:
         - lambda: |-
@@ -703,26 +700,79 @@ display:
       - position: 2
         data: [0b10001, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b00001, 0b00000]  # Ч
       - position: 3
-        data: [0b10001, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b10001, 0b00000]  # И
-      - position: 4
-        data: [0b01110, 0b01010, 0b01010, 0b01010, 0b01010, 0b01010, 0b11111, 0b10001]  # Д
-      - position: 5
-        data: [0b01111, 0b01001, 0b01001, 0b01001, 0b01001, 0b01001, 0b10001, 0b00000]  # Л
-      - position: 6
-        data: [0b10101, 0b10101, 0b10101, 0b01110, 0b10101, 0b10101, 0b10101, 0b00000]  # Ж
-      - position: 7
         data: [0b00110, 0b01001, 0b01001, 0b00110, 0b00000, 0b00000, 0b00000, 0b00000]  # Градус
+      - position: 4
+        data: [0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111]  # заливка
+      - position: 5
+        data: [0b11111, 0b11111, 0b11111, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000]  # толстый верхний -
+      - position: 6
+        data: [0b00000, 0b00000, 0b11111, 0b11111, 0b11111, 0b11111, 0b00000, 0b00000]  # толстый -
+      - position: 7
+        data: [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111, 0b11111, 0b11111]  # толстый нижний -
     lambda: |-
       it.clear();
       auto time = id(ha_time).now();
       bool time_valid = time.is_valid();
       std::string mode = id(display_mode).current_option();
 
-      if (mode == "Все показания") {
+      // функция для отрисовки цифры 3x3
+      auto drawDigit = [&](int digit, int col, int row) {
+        // Таблица сегментов для цифр:
+        const std::string segments[11][3] = {
+          {"\x04\x05\x04",    "\x04 \x04", "\x04\x07\x04"}, // 0
+          {"\x05\x04 "   ,       " \x04 ", "\x07\x04\x07"}, // 1
+          {"\x04\x05\x04", "\x07\x07\x04", "\x04\x07\x07"}, // 2
+          {"\x04\x05\x04",    " \x06\x04", "\x04\x07\x04"}, // 3
+          {   "\x04 \x04", "\x04\x07\x04",       "  \x04"}, // 4
+          {"\x04\x05\x05", "\x05\x05\x04", "\x04\x07\x04"}, // 5
+          {"\x04\x05\x05", "\x04\x05\x04", "\x04\x07\x04"}, // 6
+          {"\x05\x05\x04",       "  \x04",       "  \x04"}, // 7
+          {"\x04\x05\x04", "\x04\x06\x04", "\x04\x07\x04"}, // 8
+          {"\x04\x05\x04", "\x04\x07\x04", "\x07\x07\x04"}, // 9
+        };
+
+        it.print(col,   row, segments[digit][0]);
+        it.print(col, row+1, segments[digit][1]);
+        it.print(col, row+2, segments[digit][2]);
+      };
+
+      auto drawBigString = [&](const std::string &text, int start_col, int start_row) {
+        int col = start_col;
+        for (size_t i = 0; i < text.length(); i++) {
+          char c = text[i];
+          bool is_last = (i == text.length() - 1);
+          
+          if (c >= '0' && c <= '9') {
+            // Отрисовываем цифру
+            int digit = c - '0';
+            drawDigit(digit, col, start_row);
+            
+            // Добавляем пробел только если это не последний символ
+            // и следующий символ не двоеточие (чтобы не было лишнего пробела перед :)
+            if (!is_last && text[i+1] != ':') {
+              col += 4;  // 3 символа цифра + 1 пробел
+            } else if (!is_last) {
+              col += 3;  // только цифра, без пробела (перед двоеточием)
+            } else {
+              col += 3;  // последняя цифра без пробела
+            }
+          } else if (c == ':') {
+            // Двоеточие - без пробелов вокруг
+            it.print(col,    start_row , ".");
+            it.print(col, start_row + 1, ".");
+            col += 1;  // только сам символ двоеточия
+          } else if (c == ' ') {
+            // Явный пробел
+            col += 4;  // пропускаем место под цифру
+          }
+        }
+      };
+
+      if (mode == "Крупно время" || mode == "Крупно CO2") {
         // Температура с коррекцией
         float raw_temp = id(bme_temperature).state;
         float display_temp = raw_temp + id(temp_offset);
-        it.printf(15, 1, "%3.1f\x07", display_temp); // \x07 = градус
+        it.printf(15, 1, "%3.1f\x03", display_temp); // \x03 = градус
         
         // Влажность
         it.printf(16, 0, "%3.0f%%", id(bme_humidity).state);
@@ -733,13 +783,18 @@ display:
         // CO2
         float co2_value = id(mhz19_co2).state;
         if (isnan(co2_value)) co2_value = 400;
-        it.printf(16, 2, "%4.0f", co2_value);
+        if (mode == "Крупно время") {
+          it.printf(16, 2, "%4.0f", co2_value);
+        } else {
+          char co2_str[6];
+          sprintf(co2_str, "%4.0f", co2_value);
+          drawBigString(co2_str, 0, 0);
+        }
         
         // День недели и дата
         if (time_valid) {
           int wday = time.day_of_week;
-          std::string daytxt = "    ";
-          it.print(0, 2, "    ");
+          std::string daytxt = "??";
           
           switch(wday) {
             case 1: daytxt = "BC"; break;
@@ -759,42 +814,24 @@ display:
         }
         
         // Время
-        if (time_valid) {
-          char time_str[6];
-          sprintf(time_str, "%02d:%02d", time.hour, time.minute);
-          it.print(5, 1, time_str);
+        char time_str[6];
+        sprintf(time_str, "%02d:%02d", time.hour, time.minute);
+        if (mode == "Крупно время") {
+          if (time_valid) {
+            drawBigString(std::string(time_str), 0, 0);
+          } else {
+            it.print(0, 1, "\x06\x06\x06 \x06\x06\x06");
+            it.print(7, 0, ".");
+            it.print(7, 1, ".");
+            it.print(8, 1, "\x06\x06\x06 \x06\x06\x06");
+          }
         } else {
-          it.print(5, 1, "--:--");
+          it.print(15, 2, time_str);
         }
         
         // WiFi
         if (id(wifi_sta).is_connected()) {
           it.print(15, 0, "\\");
-        }
-        
-      } else if (mode == "Крупно время") {
-        if (time_valid) {
-          // Время по центру (примерно)
-          it.printf(7, 1, "%02d:%02d", time.hour, time.minute);  // строка 1, колонка 7
-          
-          // Дата в правом нижнем углу
-          it.strftime(12, 3, "%d.%m.%Y", time);  // строка 3, колонка 12
-        } else {
-          it.print(0, 1, "CHXP...");
-        }
-        
-      } else if (mode == "Крупно CO2") {
-        it.print(5, 0, "CO2");
-        
-        float co2_value = id(mhz19_co2).state;
-        if (isnan(co2_value)) co2_value = 400;
-        it.printf(5, 1, "%d", (int)co2_value);
-        
-        it.print(5, 2, "ppm");
-        if (time_valid) {
-          char time_str[6];
-          sprintf(time_str, "%02d:%02d", time.hour, time.minute);
-          it.print(8, 3, time_str);
         }
         
       } else if (mode == "Таблица символов 1") {
